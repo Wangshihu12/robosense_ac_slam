@@ -3,6 +3,31 @@ project(slam)
 
 SET(CMAKE_BUILD_TYPE "Release")
 
+set(PYTHON_EXECUTABLE /usr/bin/python3)
+
+find_package(catkin QUIET)  # ROS1 核心包
+find_package(ament_cmake QUIET)  # ROS2 核心包
+
+if(catkin_FOUND)
+  set(ROS_VERSION "ROS1")
+elseif(ament_cmake_FOUND)
+  set(ROS_VERSION "ROS2")
+endif()
+
+# if(ROS_VERSION STREQUAL "ROS1")
+#   configure_file(
+#           package.xml.ros1.in
+#           ${CMAKE_CURRENT_SOURCE_DIR}/package.xml
+#           @ONLY
+#   )
+# elseif(ROS_VERSION STREQUAL "ROS2")
+#   configure_file(
+#           package.xml.ros2.in
+#           ${CMAKE_CURRENT_SOURCE_DIR}/package.xml
+#           @ONLY
+#   )
+# endif()
+
 IF (WIN32)
     ADD_COMPILE_OPTIONS(/W4 /std:c++17 /EHsc )
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++14 /O2")
@@ -15,8 +40,6 @@ ELSE()
     add_compile_options(-Wall -Wextra)
     add_compile_options(-Wno-unused-parameter)
 ENDIF()
-
-set(PYTHON_EXECUTABLE /usr/bin/python3)
 
 add_definitions(-DPROJECT_PATH="${PROJECT_SOURCE_DIR}")
 add_definitions(-DNOMINMAX)  # 所有目标生效
@@ -72,7 +95,7 @@ find_package(Ceres REQUIRED)
 #========================
 find_package(catkin QUIET COMPONENTS roscpp)
 
-if(catkin_FOUND AND roscpp_FOUND)
+if(ROS_VERSION STREQUAL "ROS1")
   message(STATUS "Building with ROS1")
   add_definitions(-DUSE_ROS1)  # 定义ROS1宏
   find_package(catkin REQUIRED COMPONENTS
@@ -94,7 +117,7 @@ if(catkin_FOUND AND roscpp_FOUND)
           CATKIN_DEPENDS nav_msgs roscpp std_msgs message_runtime cv_bridge image_transport
           INCLUDE_DIRS include
   )
-else()
+elseif(ROS_VERSION STREQUAL "ROS2")
   find_package(ament_cmake REQUIRED)
   find_package(rclcpp REQUIRED)
   find_package(cv_bridge REQUIRED)
@@ -129,7 +152,7 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
-  include)
+        include)
 
 #========================
 # fast_livo lib
@@ -168,11 +191,11 @@ if(WIN32)
   target_link_libraries(fast_livo PRIVATE Threads::Threads)
 endif()
 
-if(catkin_FOUND AND roscpp_FOUND)
+if(ROS_VERSION STREQUAL "ROS1")
   target_link_libraries(fast_livo
           PUBLIC
           ${catkin_LIBRARIES})
-else()
+elseif(ROS_VERSION STREQUAL "ROS2")
   ament_target_dependencies(fast_livo
           PUBLIC
           rclcpp
@@ -196,8 +219,9 @@ target_link_libraries(slam_node
         ${YAML_CPP_LIBRARIES}
         )
 
-if(catkin_FOUND AND roscpp_FOUND)
-else()
+if(ROS_VERSION STREQUAL "ROS1")
+  # do nothing
+elseif(ROS_VERSION STREQUAL "ROS2")
   ament_export_libraries(fast_livo)
   ament_export_dependencies(vikit_common)
   install(DIRECTORY include/

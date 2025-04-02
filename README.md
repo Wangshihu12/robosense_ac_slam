@@ -18,7 +18,7 @@ If you need further information about the `FAST-LIVO` algorithm, you can refer t
 
 ## 2. Demos
 
-### 2.1 Using Robosense  Active Camera
+The following examples show mapping outputs captured with the RoboSense AC sensor in both outdoor and indoor environments. Demo data can be downloaded at [wiki page](https://robosense-wiki-en.readthedocs.io/en/latest/index.html)
 
 <div align="center">   
     <img src="img/hitsz.png" alt="mesh" /> 
@@ -37,7 +37,7 @@ If you need further information about the `FAST-LIVO` algorithm, you can refer t
 
 ## 3. Prerequisited
 
-### 3.1 ROS2
+### 3.1 ROS1 or ROS2
 
 Follow the specified content in the [official tutorial](https://fishros.org/doc/ros2/humble/Installation.html) for your operating system.
 
@@ -55,6 +55,18 @@ sudo make install
 ```
 
 ## 4. Install and Build
+
+### ROS1
+
+Clone this repository into a create an existing ros1 workspace and execute the following command to build:
+
+```bash
+cd <your_workspace>
+catkin_make # or catkin build
+```
+
+
+### ROS2
 
 Clone this repository into a  create an existing `ros2` workspace and execute the following command to build and install:  
 
@@ -86,19 +98,28 @@ Edit `config/RS_META.yaml` to set the below parameters:
 
 After setting the appropriate topic name and parameters, you can directly run **RS-FAST-LIVO** on the dataset.
 
-#### 4.1.2 extrinsic and intrinsic
+#### 4.1.2 Extrinsics and intrinsics
 
-- `extrinsic_T`: translation of LiDAR with respect to IMU
-- `extrinsic_R:`: rotation of LiDAR with respect to IMU 
-- `Rcl`: translation of LiDAR with respect to camera
-- `Pcl`: rotation of LiDAR with respect to camera 
-- `camera_pinhole_rs.yaml`: camera intrinsic
+Extrinsic and intrinsic parameters of the sensor are set in ```config/calibration.yaml```
 
-### 4.2 Run on dataset
 
-Download our collected rosbag files via OneDrive ([FAST-LIVO-Datasets](TODO)) containing **xx** rosbag files.
+You don't need to change parameters in ```calibration.yaml``` 
+
+
+### 4.2 Run
+
+#### ROS1
 
 ```bash
+# In the root of your workspace
+source devel/setup.bash # replace setup.bash with setup.zsh if you're using zsh
+roslaunch slam mapping_meta.launch
+```
+
+#### ROS2
+
+```bash
+source install/setup.bash
 ros2 run slam slam_node
 ```
 

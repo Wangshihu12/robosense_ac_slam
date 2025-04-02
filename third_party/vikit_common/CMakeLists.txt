@@ -2,7 +2,7 @@ SET(PROJECT_NAME vikit_common)
 PROJECT(${PROJECT_NAME})
 CMAKE_MINIMUM_REQUIRED(VERSION 3.8)
 SET(CMAKE_BUILD_TYPE Release) # Release, RelWithDebInfo
-
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Set build flags. Set IS_ARM on odroid board as environment variable
 IF (WIN32)
     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /D_WINDOWS /D_REENTRANT")

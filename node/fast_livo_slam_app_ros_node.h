@@ -86,7 +86,58 @@ class FastLivoSlamApp {
   void LidarCallback(const PointCloud2MsgsConstPtr msg);
   void ImuCallback(const ImuMsgsConstPtr imu_msg_ptr);
   void ImageCallback(const ImageMsgsConstPtr image_ptr);
-  void RestartSignalCallback(const EmptyMsgsConstPtr &msg);  // 新增的重启信号回调
+//  void RestartSignalCallback(const EmptyMsgsConstPtr &msg);  // 新增的重启信号回调
+#ifdef USE_ROS2
+//  void LidarZeroCpyCallback(const robosense_msgs::msg::RsPointCloud::ConstSharedPtr msg_ptr) {
+//    // static double last_sys_t = 0;
+//    // static double last_header_t = 0;
+//    double sys_t = GetTimeNow().seconds();
+//    double header_ts = HeaderToSec(msg->header);
+//
+//    // mtx_cb.lock();
+//    // f_sensor_buf << std::fixed << "sys: " << sys_t
+//    //              << " sys_dif: " << sys_t - last_sys_t << " lid " << header_ts
+//    //              << " dif: " << header_ts - last_header_t << std::endl;
+//    // mtx_cb.unlock();
+//
+//    LidarCallback_last_sys_t_ = sys_t;
+//    LidarCallback_last_header_t_ = header_ts;
+//
+//    CloudPtr ptr(new PointCloudXYZI());
+//    double cloud_abs_ts;
+//
+//    double b_t = omp_get_wtime();
+//    CloudRosToCommon(msg, ptr, cloud_abs_ts);
+//    double e_t = omp_get_wtime();
+//    printf("[ INPUT ] preprocess cloud done, header_ts: %.6f cloud_ts: %.6f "
+//           "size: %d cost(ms): %f.\n",
+//           header_ts, cloud_abs_ts, int(ptr->points.size()), (e_t - b_t) * 1000);
+//
+//    slam_ptr_->AddData(ptr, cloud_abs_ts);
+//  }
+//  void ImageZeroCpyCallback(const robosense_msgs::msg::RsImage::ConstSharedPtr image_ptr) {
+//    // static double last_sys_t = 0;
+//    // static double last_header_t = 0;
+//    double sys_t = GetTimeNow().seconds();
+//    double header_ts = HeaderToSec(image_ptr->header);
+//
+//    // mtx_cb.lock();
+//    // f_sensor_buf << std::fixed << "sys: " << sys_t
+//    //              << " sys_dif: " << sys_t - last_sys_t << "   img " << header_ts
+//    //              << " dif: " << header_ts - last_header_t << std::endl;
+//    // mtx_cb.unlock();
+//
+//    ImuCallback_last_sys_t_ = sys_t;
+//    ImuCallback_last_header_t_ = header_ts;
+//
+//    std::shared_ptr<cv::Mat> cv_img_ptr(new cv::Mat);
+//    *cv_img_ptr = cv_bridge::toCvCopy(image_ptr, "bgr8")->image;
+////    cv_img_ptr->rows = image_ptr->height;
+////    cv_img_ptr->cols = image_ptr->width;
+////    cv_img_ptr->d
+//    slam_ptr_->AddData(cv_img_ptr, header_ts);
+//  }
+#endif
 
   // ROS to common
   void CloudRosToCommon(const PointCloud2MsgsConstPtr &msg, CloudPtr &ptr, double& cloud_abs_ts);
@@ -97,7 +148,6 @@ class FastLivoSlamApp {
   ros::NodeHandle nh_;
   ros::Subscriber lidar_sub_, imu_sub_, image_sub_;
   ros::Subscriber restart_signal_sub_;  // 添加重启信号订阅器
-  image_transport::ImageTransport it_;
   image_transport::Publisher img_pub_, noise_img_pub_, raw_img_pub_, rs_all_cloud_img_pub_;
   ros::Publisher pubLaserCloudFullResRGB_, pubLaserCloudFullRes_,
                  pubVisualCloud_, pubSubVisualCloud_, pubLaserCloudEffect_,
@@ -107,8 +157,10 @@ class FastLivoSlamApp {
   tf::TransformBroadcaster br_;
 #elif defined(USE_ROS2)
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+//  rclcpp::Subscription<robosense_msgs::msg::RsPointCloud>::SharedPtr zero_cpy_lidar_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
+//  rclcpp::Subscription<robosense_msgs::msg::RsImage>::SharedPtr zero_cpy_image_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<EmptyMsgs>::SharedPtr restart_signal_sub_;
   image_transport::Publisher img_pub_, noise_img_pub_, raw_img_pub_, rs_all_cloud_img_pub_;
   rclcpp::Publisher<PointCloud2Msgs>::SharedPtr pubLaserCloudFullResRGB_, pubLaserCloudFullRes_,
@@ -147,6 +199,8 @@ class FastLivoSlamApp {
     imu_init_done_ = false;
     path_ = PathMsgs();
   }
+
+  bool zero_copy_ = false;
 
 };
 
