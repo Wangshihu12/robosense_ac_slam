@@ -4,7 +4,7 @@
 
 ## 1. 介绍
 
-本工程将最先进的LiDAR-惯性-视觉里程计系统`FAST-LIVO`适配了速腾聚创激光的新产品Active Camera.
+本工程将最先进的LiDAR-惯性-视觉里程计系统`FAST-LIVO`适配了速腾聚创激光的新产品Active Camera 第一代 (AC1).
 
 **FAST-LIVO** 是一个快速的LiDAR惯性视觉里程计系统，它建立在两个紧密耦合和直接的里程计子系统之上：VIO子系统和LIO子系统。LIO子系统将新一帧点云（而不是边缘或平面特征点）配准到增量构建的点云地图中。地图点还关联了图像patch，VIO子系统通过最小化patch的直接光度误差来匹配新图像，而无需提取任何视觉特征（例如ORB或FAST角特征）。
 
@@ -18,7 +18,7 @@
 
 ## 2. 样例
 
-### 2.1 使用 Active Camera 数据
+本节展示了使用AC1在室内和室外建图的效果。ROS2的demo数据可以在 [wiki页面](https://robosense-wiki-cn.readthedocs.io/zh-cn/latest/index.html)下载。
 
 <div align="center">   
     <img src="img/hitsz.png" alt="mesh" /> 
@@ -37,9 +37,7 @@
 
 ## 3. 依赖
 
-### 3.1 ROS2
-
-此项目基于 `ros2 humble`进行开发测试
+### 3.1 ROS (ROS 和 ROS2)
 
 根据您的操作系统选择 [官方教程](https://fishros.org/doc/ros2/humble/Installation.html) 中的指定内容进行执行
 
@@ -58,20 +56,25 @@ sudo make install
 
 ## 4. 安装编译
 
-下载仓库：
+### ROS1
 
-将本工程代码拉取到一个`ros2`工作空间中，然后在终端中执行以下命令编译安装：
-您可以创建一个新的文件夹或进入您现有的 `ros2` 工作空间，执行以下命令将代码拉取到工作空间内
+将本工程代码拉取到一个`ros1`工作空间中，然后在终端中执行以下命令编译安装：
 
 ```bash
+cd <your workspace>
+catkin_make
+```
+
+### ROS2
+
+
+将本工程代码拉取到一个`ros2`工作空间中，然后在终端中执行以下命令编译安装：
+
+```bash
+cd <your workspace>
 colcon build --symlink-install 
 ```
 
-编译安装完成后，推荐刷新一下工作空间的 `bash profile`，确保组件功能正常
-
-```bash
-source install/setup.bash
-```
 
 ## 4. 运行
 
@@ -98,17 +101,21 @@ source install/setup.bash
 
 #### 4.1.2 外参、内参
 
-- `extrinsic_T`: 将IMU坐标系变换到LiDAR坐标系的平移
-- `extrinsic_R:`: 将IMU坐标系变换到LiDAR坐标系的旋转
-- `Rcl`: 将camera坐标系变换到LiDAR坐标系的平移
-- `Pcl`: 将camera坐标系变换到LiDAR坐标系的旋转 
-- `camera_pinhole_rs.yaml`: camera内参
+AC1的传感器外参和内参在```config/calibration.yaml```配置。一般情况下您不需要修改这些参数。
 
-### 4.2 在数据集运行
+### 4.2 运行
 
-从OneDrive ([FAST-LIVO-Datasets](TODO))下载数据集， 共包含 **xx** 个rosbag
+#### ROS
 
 ```bash
+source devel/setup.bash
+roslaunch slam mapping_meta.launch
+```
+
+#### ROS2
+
+```bash
+source install/setup.bash
 ros2 run slam slam_node
 ```
 

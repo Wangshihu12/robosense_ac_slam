@@ -112,6 +112,8 @@ inline void SetQuaternionMsgs(double roll, double pitch, double yaw,
 #include <tf2/transform_datatypes.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_broadcaster.h>
+//#include "robosense_msgs/msg/rs_image.hpp"
+//#include "robosense_msgs/msg/rs_point_cloud.hpp"
 
 using ImuMsgsConstPtr = sensor_msgs::msg::Imu::SharedPtr;
 using ImuMsgs = sensor_msgs::msg::Imu;

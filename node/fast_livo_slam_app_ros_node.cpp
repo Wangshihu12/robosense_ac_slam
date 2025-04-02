@@ -53,13 +53,25 @@ FastLivoSlamApp::FastLivoSlamApp(const std::string cfg_path) {
   image_sub_ = nh_.subscribe(img_topic, 100, &FastLivoSlamApp::ImageCallback, this);
   
   // 添加重启信号订阅器
-  restart_signal_sub_ = nh_.subscribe("/fast_livo/restart_signal", 10, &FastLivoSlamApp::RestartSignalCallback, this);
+//  restart_signal_sub_ = nh_.subscribe("/fast_livo/restart_signal", 10, &FastLivoSlamApp::RestartSignalCallback, this);
 #elif defined(USE_ROS2)
+  const char* val = std::getenv("RMW_FASTRTPS_USE_QOS_FROM_XML");
+  if (val != nullptr && std::string(val) == "1") {
+    zero_copy_ = true;
+  } else {
+    zero_copy_ = false;
+  }
+
   ros2_node =  rclcpp::Node::make_shared("fast_livo_slam_app");
   br_ptr_ = std::make_shared<tf2_ros::TransformBroadcaster>(ros2_node);
-  lidar_sub_ = ros2_node->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, 100, std::bind(&FastLivoSlamApp::LidarCallback, this, std::placeholders::_1));
   imu_sub_ = ros2_node->create_subscription<sensor_msgs::msg::Imu>(imu_topic, 5000, std::bind(&FastLivoSlamApp::ImuCallback, this, std::placeholders::_1));
-  image_sub_ = ros2_node->create_subscription<sensor_msgs::msg::Image>(img_topic, 300, std::bind(&FastLivoSlamApp::ImageCallback, this, std::placeholders::_1));
+  if (zero_copy_) {
+//    zero_cpy_lidar_sub_ = ros2_node->create_subscription<robosense_msgs::msg::RsPointCloud>(lid_topic, 100, std::bind(&FastLivoSlamApp::LidarZeroCpyCallback, this, std::placeholders::_1));
+//    zero_cpy_image_sub_ = ros2_node->create_subscription<robosense_msgs::msg::RsImage>(img_topic, 300, std::bind(&FastLivoSlamApp::ImageZeroCpyCallback, this, std::placeholders::_1));
+  } else {
+    lidar_sub_ = ros2_node->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, 100, std::bind(&FastLivoSlamApp::LidarCallback, this, std::placeholders::_1));
+    image_sub_ = ros2_node->create_subscription<sensor_msgs::msg::Image>(img_topic, 300, std::bind(&FastLivoSlamApp::ImageCallback, this, std::placeholders::_1));
+  }
 #endif
 
   // full LIVO result callback
@@ -487,7 +499,11 @@ std::mutex mtx_cb;
 void FastLivoSlamApp::LidarCallback(const PointCloud2MsgsConstPtr msg) {
   // static double last_sys_t = 0;
   // static double last_header_t = 0;
+#ifdef USE_ROS1
+  double sys_t = GetTimeNow().toSec();
+#elif USE_ROS2
   double sys_t = GetTimeNow().seconds();
+#endif
   double header_ts = HeaderToSec(msg->header);
 
   // mtx_cb.lock();
@@ -527,7 +543,11 @@ void FastLivoSlamApp::ImuCallback(const ImuMsgsConstPtr imu_msg_ptr) {
 void FastLivoSlamApp::ImageCallback(const ImageMsgsConstPtr image_ptr) {
   // static double last_sys_t = 0;
   // static double last_header_t = 0;
+#ifdef USE_ROS1
+  double sys_t = GetTimeNow().toSec();
+#elif USE_ROS2
   double sys_t = GetTimeNow().seconds();
+#endif
   double header_ts = HeaderToSec(image_ptr->header);
 
   // mtx_cb.lock();
