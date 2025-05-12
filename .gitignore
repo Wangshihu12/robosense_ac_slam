@@ -1,0 +1,11 @@
+# project define
+
+.idea/
+.cache/
+libs/
+cmake-build-debug/
+build/
+tmp/
+Log/
+.vscode/
+package.xml

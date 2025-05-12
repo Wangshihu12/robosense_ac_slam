@@ -72,6 +72,7 @@ catkin_make
 
 ```bash
 cd <your workspace>
+source <robosense_ac_ros2_sdk_infra_workspace>/install/setup.bash
 colcon build --symlink-install 
 ```
 
@@ -114,7 +115,22 @@ roslaunch slam mapping_meta.launch
 
 #### ROS2
 
+非零拷贝模式
+
 ```bash
+source <robosense_ac_ros2_sdk_infra_workspace>/install/setup.bash
+export FASTRTPS_DEFAULT_PROFILES_FILE=ac_driver/conf/shm_fastdds.xml
+export RMW_FASTRTPS_USE_QOS_FROM_XML=0
+source install/setup.bash
+ros2 run slam slam_node
+```
+
+零拷贝模式(仅限ros2 humble版本)
+
+```
+source <robosense_ac_ros2_sdk_infra_workspace>/install/setup.bash
+export FASTRTPS_DEFAULT_PROFILES_FILE=ac_driver/conf/shm_fastdds.xml
+export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 source install/setup.bash
 ros2 run slam slam_node
 ```

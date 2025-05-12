@@ -852,12 +852,42 @@ void FastLivoSlam::CropKdTree(const StatesGroup &state) {
   cub_needrm.clear();
   kdtree_delete_counter = 0;
   kdtree_delete_time = 0.0;
-  V3D pos_LiD = state.pos_end;
+  const V3D& pos_LiD = state.pos_end;
+  bool need_move = false;
+#if 1 // RS, simply remove near 26 voxel where min = half_len and max = lid_pos + max_range
+  std::vector<Eigen::Vector3i> far_directions;
+  for (int x = -1; x <= 1; x++) {
+    for (int y = -1; y <= 1; y++) {
+      for (int z = -1; z <= 1; z++) {
+        if (x || y || z)
+          far_directions.push_back(Eigen::Vector3i(x, y, z));
+      }
+    }
+  }
+  double half_len = cube_len / 2.0;
+  BoxPointType rm_box;
+  for (const auto &dir : far_directions) {
+    for (int i = 0; i < 3; ++i) {
+      rm_box.vertex_min[i] = pos_LiD(i) + half_len * dir[i];
+      rm_box.vertex_max[i] =
+          pos_LiD(i) + std::max(cube_len * 10., 150.) * dir[i]; // cover max_range
+      if (rm_box.vertex_min[i] > rm_box.vertex_max[i])
+        std::swap(rm_box.vertex_min[i], rm_box.vertex_max[i]);
+
+      if (dir[i] == 0) {
+        rm_box.vertex_min[i] = pos_LiD(i) - half_len;
+        rm_box.vertex_max[i] = pos_LiD(i) + half_len;
+      }
+    }
+    cub_needrm.push_back(rm_box);
+  }
+  livo_result_->cloud_process_result->need_move = need_move = true;
+#else // bug in official
+  PRINT("Local Map is (%0.2f,%0.2f) (%0.2f,%0.2f) (%0.2f,%0.2f)\n",
+          LocalMap_Points.vertex_min[0], LocalMap_Points.vertex_max[0],
+          LocalMap_Points.vertex_min[1], LocalMap_Points.vertex_max[1],
+          LocalMap_Points.vertex_min[2], LocalMap_Points.vertex_max[2]);
   if (!Localmap_Initialized) {
-    // if (cube_len <= 2.0 * MOV_THRESHOLD * DET_RANGE) throw
-    // std::invalid_argument("[Error]: Local Map Size is too small! Please
-    // change parameter \"cube_side_length\" to larger than %d in the launch
-    // file.\n");
     for (int i = 0; i < 3; i++) {
       LocalMap_Points.vertex_min[i] = pos_LiD(i) - cube_len / 2.0;
       LocalMap_Points.vertex_max[i] = pos_LiD(i) + cube_len / 2.0;
@@ -865,16 +895,13 @@ void FastLivoSlam::CropKdTree(const StatesGroup &state) {
     Localmap_Initialized = true;
     return;
   }
-  // printf("Local Map is (%0.2f,%0.2f) (%0.2f,%0.2f) (%0.2f,%0.2f)\n",
-  // LocalMap_Points.vertex_min[0],LocalMap_Points.vertex_max[0],LocalMap_Points.vertex_min[1],LocalMap_Points.vertex_max[1],LocalMap_Points.vertex_min[2],LocalMap_Points.vertex_max[2]);
   float dist_to_map_edge[3][2];
-  bool need_move = false;
   for (int i = 0; i < 3; i++) {
     dist_to_map_edge[i][0] = fabs(pos_LiD(i) - LocalMap_Points.vertex_min[i]);
     dist_to_map_edge[i][1] = fabs(pos_LiD(i) - LocalMap_Points.vertex_max[i]);
     if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE ||
         dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE)
-      need_move = true;
+      livo_result_->cloud_process_result->need_move = need_move = true;
   }
   if (!need_move)
     return;
@@ -889,27 +916,29 @@ void FastLivoSlam::CropKdTree(const StatesGroup &state) {
       New_LocalMap_Points.vertex_min[i] -= mov_dist;
       tmp_boxpoints.vertex_min[i] = LocalMap_Points.vertex_max[i] - mov_dist;
       cub_needrm.push_back(tmp_boxpoints);
-      // printf("Delete Box is (%0.2f,%0.2f) (%0.2f,%0.2f) (%0.2f,%0.2f)\n",
+      // PRINT("Delete Box is (%0.2f,%0.2f) (%0.2f,%0.2f) (%0.2f,%0.2f)\n",
       // tmp_boxpoints.vertex_min[0],tmp_boxpoints.vertex_max[0],tmp_boxpoints.vertex_min[1],tmp_boxpoints.vertex_max[1],tmp_boxpoints.vertex_min[2],tmp_boxpoints.vertex_max[2]);
     } else if (dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE) {
       New_LocalMap_Points.vertex_max[i] += mov_dist;
       New_LocalMap_Points.vertex_min[i] += mov_dist;
       tmp_boxpoints.vertex_max[i] = LocalMap_Points.vertex_min[i] + mov_dist;
       cub_needrm.push_back(tmp_boxpoints);
-      // printf("Delete Box is (%0.2f,%0.2f) (%0.2f,%0.2f) (%0.2f,%0.2f)\n",
+      // PRINT("Delete Box is (%0.2f,%0.2f) (%0.2f,%0.2f) (%0.2f,%0.2f)\n",
       // tmp_boxpoints.vertex_min[0],tmp_boxpoints.vertex_max[0],tmp_boxpoints.vertex_min[1],tmp_boxpoints.vertex_max[1],tmp_boxpoints.vertex_min[2],tmp_boxpoints.vertex_max[2]);
     }
   }
   LocalMap_Points = New_LocalMap_Points;
+#endif
 
   RemovePointsFromKdTree();
   double delete_begin = omp_get_wtime();
   if (cub_needrm.size() > 0)
     kdtree_delete_counter = ikdtree.Delete_Point_Boxes(cub_needrm);
   kdtree_delete_time = omp_get_wtime() - delete_begin;
-  // printf("Delete time: %0.6f, delete size:
-  // %d\n",kdtree_delete_time,kdtree_delete_counter); printf("Delete Box:
-  // %d\n",int(cub_needrm.size()));
+
+  // PRINT("Delete time: %0.6f, delete size: %d\n", kdtree_delete_time,
+  //       kdtree_delete_counter);
+  // PRINT("Delete Box: %d\n", int(cub_needrm.size()));
 
   livo_result_->cloud_process_result->need_move= need_move;
   livo_result_->cloud_process_result->kdtree_delete_counter = kdtree_delete_counter;

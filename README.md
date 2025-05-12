@@ -71,6 +71,7 @@ catkin_make # or catkin build
 Clone this repository into a  create an existing `ros2` workspace and execute the following command to build and install:  
 
 ```bash
+source <robosense_ac_ros2_sdk_infra_workspace>/install/setup.bash
 colcon build --symlink-install 
 ```
 
@@ -118,7 +119,22 @@ roslaunch slam mapping_meta.launch
 
 #### ROS2
 
+Non-zero-copy mode
+
 ```bash
+source <robosense_ac_ros2_sdk_infra_workspace>/install/setup.bash
+export FASTRTPS_DEFAULT_PROFILES_FILE=ac_driver/conf/shm_fastdds.xml
+export RMW_FASTRTPS_USE_QOS_FROM_XML=0
+source install/setup.bash
+ros2 run slam slam_node
+```
+
+Zero-copy mode (only for ROS2 Humble)
+
+```
+source <robosense_ac_ros2_sdk_infra_workspace>/install/setup.bash
+export FASTRTPS_DEFAULT_PROFILES_FILE=ac_driver/conf/shm_fastdds.xml
+export RMW_FASTRTPS_USE_QOS_FROM_XML=1
 source install/setup.bash
 ros2 run slam slam_node
 ```

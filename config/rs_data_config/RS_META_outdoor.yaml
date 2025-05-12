@@ -9,7 +9,6 @@ topic:
 
 # 传感器开关
 img_enable : 1 # 0代表不使用图像 LIO模式
-lidar_enable : 1 # 0代表不使用激光雷达 VIO模式
 
 # 传感器优化权重
 img_point_cov : 0.1 # 可以调整. 已按照超传标准分辨率设置，内部自动除以缩放系数img_scaling_ratio平方
@@ -32,7 +31,7 @@ point_filter_num : 1 # lidar点云采样频率 可以调整, 如果想滤除拖�
 max_iteration : 5 # 最大优化次数 可以调整
 filter_size_surf : 0.3 # source点栅格尺寸 可以调整 室内减小
 filter_size_map : 0.3 # ikdtree地图栅格尺寸 可以调整 室内减小
-cube_side_length : 20 # 点云地图格子尺寸（m）
+cube_side_length : 100 # 点云地图格子尺寸（m）
 lidar_max_range: 30 # lidar测距范围， 过大导致地图点过多降低性能
 
 # VIO

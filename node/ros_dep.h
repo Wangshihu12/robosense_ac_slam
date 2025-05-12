@@ -112,13 +112,16 @@ inline void SetQuaternionMsgs(double roll, double pitch, double yaw,
 #include <tf2/transform_datatypes.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_broadcaster.h>
-//#include "robosense_msgs/msg/rs_image.hpp"
-//#include "robosense_msgs/msg/rs_point_cloud.hpp"
+// for zero_copy
+#include <robosense_msgs/msg/rs_image.hpp>
+#include <robosense_msgs/msg/rs_point_cloud.hpp>
 
 using ImuMsgsConstPtr = sensor_msgs::msg::Imu::SharedPtr;
 using ImuMsgs = sensor_msgs::msg::Imu;
 using PointCloud2MsgsConstPtr = sensor_msgs::msg::PointCloud2::SharedPtr;
 using ImageMsgsConstPtr = sensor_msgs::msg::Image::SharedPtr;
+using ZeroCopyImageMsgsConstPtr = robosense_msgs::msg::RsImage::SharedPtr;
+using ZeroCopyPointCloud2MsgsConstPtr = robosense_msgs::msg::RsPointCloud::SharedPtr;
 using PointCloud2Msgs = sensor_msgs::msg::PointCloud2;
 using EmptyMsgs = std_msgs::msg::Empty;
 using EmptyMsgsConstPtr = std_msgs::msg::Empty::ConstSharedPtr;
@@ -170,7 +173,6 @@ inline void RosSpinOnce() { rclcpp::spin_some(ros2_node); }
 inline void RosSpin() { rclcpp::spin(ros2_node); }
 
 inline void RosShutDown() {
-  ros2_node.reset();
   rclcpp::shutdown(); // 关闭ROS 2
 }
 

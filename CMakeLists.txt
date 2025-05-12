@@ -122,6 +122,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
   find_package(rclcpp REQUIRED)
   find_package(cv_bridge REQUIRED)
   find_package(sensor_msgs REQUIRED)
+  find_package(robosense_msgs REQUIRED)
   find_package(nav_msgs REQUIRED)
   find_package(image_transport REQUIRED)
   find_package(pcl_conversions REQUIRED)
@@ -205,6 +206,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
           nav_msgs
           image_transport
           tf2_ros
+          robosense_msgs
           )
 endif()
 
