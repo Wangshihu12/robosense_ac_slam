@@ -568,99 +568,134 @@ bool FastLivoSlam::CombineSensorMsgs(LidarMeasureGroup &meas) {
   return true;
 }
 
+/**
+ * [功能描述]：FastLivoSlam的核心处理循环，负责传感器数据融合和SLAM状态估计
+ * 主要功能包括：
+ * 1. 传感器数据同步和组合
+ * 2. IMU状态预测和点云去畸变
+ * 3. VIO（视觉惯性里程计）处理
+ * 4. LIO（激光惯性里程计）处理
+ * 5. K-D树地图更新和结果发布
+ * @return 无返回值
+ */
 void FastLivoSlam::CoreLoop() {
   LINFO << "FastLivoSlam Core loop start. " << REND;
+  
+  // 主循环：持续运行直到程序停止标志被设置
   while (run_flag_) {
 
+    // 等待传感器数据缓冲区有新数据到达
     std::unique_lock<std::mutex> cb_mutex_lg(mtx_loop);
-    sig_buffer.wait(cb_mutex_lg);
+    sig_buffer.wait(cb_mutex_lg); // 阻塞等待数据信号
     cb_mutex_lg.unlock();
 
+    // 内层循环：处理所有可用的传感器数据
     while (true) {
+      // 尝试组合传感器消息（IMU、LiDAR、相机）
       if (!CombineSensorMsgs(LidarMeasures)) {
-        break;
+        break; // 如果没有足够的数据组合，退出内层循环
       }
     
+      // 检查IMU是否需要重置
       if (flg_imu_reset_) {
-        p_imu->Reset();
+        p_imu->Reset(); // 重置IMU状态
         flg_imu_reset_ = false;
-        continue;
+        continue; // 跳过当前循环，重新开始
       }
 
-      // record time-cost of each module
+      // 初始化各模块的时间统计变量
       match_time = kdtree_search_time = kdtree_search_counter = solve_time =
           solve_const_H_time = 0;
 
+      // 记录当前循环开始时间
       loop_beg_t = omp_get_wtime();
 
-      // 动态初始化
+      // 自适应初始化模块（仅在编译时启用ADAPTIVE_INIT时有效）
   #ifdef ADAPTIVE_INIT
+      // 如果启用图像且IMU需要初始化但数据还未准备好
       if (img_en && p_imu->imu_need_init_ && !p_imu->init_data_ready_) {
-        double tgt_time = 0.;
+        double tgt_time = 0.; // 目标时间戳
+        
+        // 根据当前数据类型确定目标时间
         if (LidarMeasures.is_lidar_end) {
+          // 如果是LiDAR数据结束，计算LiDAR扫描结束时间
           tgt_time = LidarMeasures.lidar_beg_time + LidarMeasures.lidar->points.back().curvature / double(1000);
         } else {
+          // 如果是图像数据，使用图像偏移时间
           tgt_time = LidarMeasures.lidar_beg_time + LidarMeasures.measures.back().img_offset_time;
         }
 
+        // 等待初始化完成
         while (run_flag_ && livo_init_ptr && p_imu) {
+          // 尝试获取初始化结果
           p_imu->init_data_ready_ = livo_init_ptr->getInitResult(p_imu->init_time_, p_imu->init_R_, p_imu->init_bg_, p_imu->init_v_, p_imu->init_g_);
           if (p_imu->init_time_ >= tgt_time) {
-            break;
+            break; // 初始化时间达到目标时间，退出等待
           } else {
-            cv::waitKey(2);
+            cv::waitKey(2); // 短暂等待，避免过度占用CPU
           }
         }
+        // 清空初始化缓冲区
         if (livo_init_ptr && p_imu && p_imu->init_data_ready_) {
           livo_init_ptr->clearBuf();
         }
       }
 #endif
-      // 前向传播+反向传播去畸变
+
+      // IMU状态预测和点云去畸变
       double process2_t_start = omp_get_wtime();
+      // 使用IMU数据预测状态并对点云进行运动补偿
       p_imu->PredicteStateAndUndistortCloud(LidarMeasures, state,
                                             feats_undistort);
-      state_propagat = state;
+      state_propagat = state; // 保存传播后的状态用于后续处理
       process2_t = omp_get_wtime() - process2_t_start;
-      livo_result_->time_cost->imu_process_t = process2_t;
+      livo_result_->time_cost->imu_process_t = process2_t; // 记录IMU处理时间
 
+      // 调试模式下显示测量数据信息
       if (lidar_selector->debug) {
         LidarMeasures.debug_show();
       }
 
-      // LIO初始化条件
+      // 检查LIO初始化条件
       if (feats_undistort->empty() || (feats_undistort == nullptr)) {
         if (!fast_lio_is_ready) {
+          // 如果FAST-LIO还未准备好，记录首次LiDAR时间
           first_lidar_time = LidarMeasures.lidar_beg_time;
           p_imu->first_lidar_time = first_lidar_time;
           LidarMeasures.measures.clear();
           LERROR << "[ IMU initialing] FAST-LIO not ready because of no lidar points. " << REND;
+          // 发布结果回调
           if(full_result_cb_){
             full_result_cb_(*livo_result_);
           }
-          continue;
+          continue; // 跳过当前循环
         }
       }
+      
+      // 标记FAST-LIO准备就绪
       fast_lio_is_ready = true;
+      // 判断EKF是否已初始化（需要运行0.5秒以上）
       flg_EKF_inited = LidarMeasures.lidar_beg_time - first_lidar_time < 0.5 ? false : true;
 
-      // get KdTree cloud
+      // 获取K-D树点云数据（用于VIO地图投影或LIO地图显示）
       if ((!LidarMeasures.is_lidar_end && use_map_proj) ||
           (LidarMeasures.is_lidar_end &&
           (show_lidar_map || boundary_point_remove))) {
         auto tt = omp_get_wtime();
+        // 清空存储并重新展平K-D树
         PointVector().swap(ikdtree.PCL_Storage);
         ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
-        featsFromMap->points = ikdtree.PCL_Storage;
+        featsFromMap->points = ikdtree.PCL_Storage; // 获取地图点云
         flatten_t = omp_get_wtime() - tt;
         livo_result_->cloud_process_result->current_size = featsFromMap->size();
       }
 
-      // VIO
+      // VIO处理分支：当前数据不是LiDAR扫描结束时
       if (!LidarMeasures.is_lidar_end) {
   #if 1
         // TODO: 完善VIO初始化条件
   #else
+        // 预留的VIO初始化逻辑（当前被禁用）
         if (core_loop_first_) {
           first_lidar_time_ = LidarMeasures.lidar_beg_time;
           core_loop_first_ = false;
@@ -673,59 +708,69 @@ void FastLivoSlam::CoreLoop() {
           continue;
         }
   #endif
+        
+        // 如果启用了图像处理
         if (img_en) {
+          // VIO状态估计
           auto tt = omp_get_wtime();
-          EstimateVIOState();
+          EstimateVIOState(); // 估计视觉惯性里程计状态
           livo_result_->time_cost->vio_t = omp_get_wtime() - tt;
 
+          // 发布VIO结果
           tt = omp_get_wtime();
-          PublishVIOResult();
+          PublishVIOResult(); // 发布VIO估计结果
           livo_result_->time_cost->pub_vio_t = omp_get_wtime() - tt;
         }
+        
         loop_end_t = omp_get_wtime();
-        continue; // VIO end loop
+        continue; // VIO处理完成，继续下一轮循环
       }
 
-      // LIO prepare
-      /*** crop kdtree, keep the rest in lidar FOV ***/
+      // LIO处理分支：当前数据是LiDAR扫描结束时
+      
+      // LIO预处理步骤
+      /*** 裁剪K-D树，保留LiDAR视野内的点 ***/
       CropKdTree(state);
 
-      /*** remove noisy cloud in scan, downsample scan, calc VIO weight***/
+      /*** 移除扫描中的噪声点，降采样扫描，计算VIO权重 ***/
       PreprocessCloud(feats_undistort);
 
-      /*** initialize the map kdtree ***/
+      /*** 初始化地图K-D树 ***/
       if (ikdtree.Root_Node == nullptr) {
-        BuildKdTree(feats_down_body);
-        continue;
+        BuildKdTree(feats_down_body); // 构建初始K-D树
+        continue; // 跳过当前循环，等待下一帧数据
       }
 
-      // LIO state update
-      /*** iterated state estimation ***/
+      // LIO状态更新
+      /*** 迭代状态估计 ***/
       double t_update_start = omp_get_wtime();
       if (lidar_en) {
-        EstimateLIOState();
+        EstimateLIOState(); // 估计激光惯性里程计状态
       }
       update_LIO_state_t = omp_get_wtime() - t_update_start;
       livo_result_->time_cost->lio_t = update_LIO_state_t;
 
-      /*** kdtree grow, add the feature points to map kdtree ***/
+      /*** K-D树增长，将特征点添加到地图K-D树中 ***/
       double kdtree_grow_t_start = omp_get_wtime();
-      KdTreeGrow();
+      KdTreeGrow(); // 更新地图K-D树
       kdtree_grow_t = omp_get_wtime() - kdtree_grow_t_start;
       loop_end_t = omp_get_wtime();
 
-      PublishLIOResult();
+      // 发布LIO结果
+      PublishLIOResult(); // 发布激光惯性里程计结果
       livo_result_->time_cost->pub_lio_t = omp_get_wtime() - loop_end_t;
     }
   }
 
-  /**************** save map ****************/
-  SaveMap();
+  /**************** 保存地图 ****************/
+  SaveMap(); // 程序结束时保存地图到文件
 
+  // 关闭所有日志文件
   fout_out.close();
   fout_pre.close();
   f_state_utm.close();
   f_lidar_state_utm.close();
+  
   LINFO << "FastLivoSlam Core loop exit." << REND;
 }
 
@@ -1226,202 +1271,308 @@ void FastLivoSlam::EstimateLIOState() {
   }
 }
 
+/**
+ * [功能描述]：将当前帧的特征点添加到K-D树地图中，实现地图的增长更新
+ * 采用降采样策略避免地图点过于密集，提高查询效率
+ * @return 无返回值
+ */
 void FastLivoSlam::KdTreeGrow() {
+  // 检查是否有足够的降采样特征点，如果没有则直接返回
   if (!feats_down_size)
     return;
+  
+  // 获取地图降采样的体素大小
   int size = filter_size_map_min;
-#if 1 // fast-lio2
-  PointVector PointToAdd;
-  PointVector PointNoNeedDownsample;
+  
+#if 1 // 使用 fast-lio2 的地图增长策略
+  // 定义两个点云容器：需要降采样的点和不需要降采样的点
+  PointVector PointToAdd;           // 需要降采样添加的点
+  PointVector PointNoNeedDownsample; // 不需要降采样直接添加的点
+  
+  // 预分配内存空间，提高效率
   PointToAdd.reserve(feats_down_size);
   PointNoNeedDownsample.reserve(feats_down_size);
+  
+  // 遍历当前帧的每个降采样特征点
   for (int i = 0; i < feats_down_size; i++) {
-    /* transform to world frame */
+    /* 将点从机体坐标系转换到世界坐标系 */
     pointBodyToWorld(&(feats_down_body->points[i]),
                      &(feats_down_world->points[i]));
-    /* decide if need add to map */
+    
+    /* 判断是否需要添加到地图中 */
+    // 如果该点有最近邻点且EKF已初始化，则进行降采样判断
     if (!Nearest_Points[i].empty() && flg_EKF_inited) {
-      const PointVector &points_near = Nearest_Points[i];
-      bool need_add = true;
-      BoxPointType Box_of_Point;
-      PointType downsample_result, mid_point;
+      const PointVector &points_near = Nearest_Points[i]; // 获取最近邻点集
+      bool need_add = true; // 是否需要添加该点的标志
+      BoxPointType Box_of_Point; // 点的包围盒（未使用）
+      PointType downsample_result, mid_point; // 降采样结果点和体素中心点
+      
+      // 计算当前点所在体素的中心点坐标
       mid_point.x =
           floor(feats_down_world->points[i].x / size) * size + 0.5 * size;
       mid_point.y =
           floor(feats_down_world->points[i].y / size) * size + 0.5 * size;
       mid_point.z =
           floor(feats_down_world->points[i].z / size) * size + 0.5 * size;
+      
+      // 计算当前点到体素中心的距离
       float dist = calc_dist(feats_down_world->points[i], mid_point);
+      
+      // 如果最近邻点在体素外部，则直接添加不进行降采样
       if (fabs(points_near[0].x - mid_point.x) > 0.5 * size &&
           fabs(points_near[0].y - mid_point.y) > 0.5 * size &&
           fabs(points_near[0].z - mid_point.z) > 0.5 * size) {
         PointNoNeedDownsample.push_back(feats_down_world->points[i]);
         continue;
       }
+      
+      // 检查最近邻点中是否有点比当前点更接近体素中心
       for (int readd_i = 0; readd_i < NUM_MATCH_POINTS; readd_i++) {
+        // 确保有足够的最近邻点
         if (points_near.size() < NUM_MATCH_POINTS)
           break;
+        
+        // 如果存在更接近体素中心的点，则不添加当前点（避免冗余）
         if (calc_dist(points_near[readd_i], mid_point) < dist) {
           need_add = false;
           break;
         }
       }
+      
+      // 如果需要添加，则加入到降采样点集中
       if (need_add)
         PointToAdd.push_back(feats_down_world->points[i]);
     } else {
+      // 如果没有最近邻或EKF未初始化，直接添加该点
       PointToAdd.push_back(feats_down_world->points[i]);
     }
   }
 
+  // 将需要降采样的点添加到K-D树中（启用降采样）
   int add_point_size = ikdtree.Add_Points(PointToAdd, true);
+  
+  // 将不需要降采样的点添加到K-D树中（禁用降采样）
   ikdtree.Add_Points(PointNoNeedDownsample, false);
+  
+  // 计算总的添加点数（包含降采样和非降采样的点）
   add_point_size = PointToAdd.size() + PointNoNeedDownsample.size();
 
-#else // fast-livo
+#else // fast-livo 的简单策略（已废弃）
+  // 简单地将所有点转换到世界坐标系
   for (int i = 0; i < feats_down_size; i++) {
-    /* transform to world frame */
+    /* 将点从机体坐标系转换到世界坐标系 */
     pointBodyToWorld(&(feats_down_body->points[i]),
                      &(feats_down_world->points[i]));
   }
+  // 直接添加所有点到K-D树（启用降采样）
   ikdtree.Add_Points(feats_down_world->points, true);
 #endif
 }
 
-// VIO
+/**
+ * [功能描述]：执行VIO（视觉惯性里程计）状态估计，将LiDAR点云投影到图像进行视觉特征匹配
+ * 主要步骤包括：
+ * 1. 过滤当前帧点云，保留视野范围内的有效点
+ * 2. 过滤地图点云，扩大视野范围
+ * 3. 根据法线角度进行点云筛选
+ * 4. 调用视觉检测器进行特征匹配和状态估计
+ * @return 无返回值
+ */
 void FastLivoSlam::EstimateVIOState() {
-  auto tt = omp_get_wtime();
+  auto tt = omp_get_wtime(); // 记录开始时间
+  
+  // 获取用于VIO的有效点云数据
   const auto &valid_source_cloud_for_VIO = valid_source_cloud;
+  
+  // 检查点云是否为空，如果为空则直接返回
   if (valid_source_cloud_for_VIO->empty()) {
     LERROR << "[ VIO ] continue, source size not enough: "
            << valid_source_cloud_for_VIO->size() << REND;
     return;
   }
-  // 先验状态
-  euler_cur = RotMtoEuler(state.rot_end);
+  
+  // 计算并记录先验状态信息
+  euler_cur = RotMtoEuler(state.rot_end); // 将旋转矩阵转换为欧拉角
+  // 将先验状态信息写入日志文件
   fout_pre << setw(20) << LidarMeasures.last_update_time - first_lidar_time
-           << " " << euler_cur.transpose() * R2D << " "
-           << state.pos_end.transpose() << " " << state.vel_end.transpose()
-           << " " << state.bias_g.transpose() << " " << state.bias_a.transpose()
-           << " " << state.gravity.transpose() << endl;
+           << " " << euler_cur.transpose() * R2D << " "           // 欧拉角（度）
+           << state.pos_end.transpose() << " "                   // 位置
+           << state.vel_end.transpose() << " "                   // 速度
+           << state.bias_g.transpose() << " "                    // 陀螺仪偏置
+           << state.bias_a.transpose() << " "                    // 加速度计偏置
+           << state.gravity.transpose() << endl;                 // 重力向量
 
-  // 将 scan+地图 投影到图像
+  // 初始化噪声点云容器，用于存储满足特定条件的点
   lidar_selector->noise_cloud.reset(new PointCloudXYZI());
   int scan_size = valid_source_cloud_for_VIO->size();
+  // 预分配内存空间，包含扫描点和地图点的总数
   lidar_selector->noise_cloud->reserve(scan_size + featsFromMap->size());
-  V3D pos_I = state.pos_end;
-  M3D rot_I = state.rot_end;
+  
+  // 获取当前IMU的位置和旋转状态
+  V3D pos_I = state.pos_end;  // IMU位置
+  M3D rot_I = state.rot_end;  // IMU旋转矩阵
 
-  // 过滤scan
-  std::vector<int> is_scan_selected(scan_size, 0);
-  std::vector<PointType> scan_vec(scan_size);
+  // ========== 过滤当前帧扫描点云 ==========
+  std::vector<int> is_scan_selected(scan_size, 0);  // 扫描点选择标志
+  std::vector<PointType> scan_vec(scan_size);       // 扫描点副本容器
+  
+  // 判断是否启用法线过滤（需要EKF已初始化且启用法线过滤）
   bool normal_filter = flg_EKF_inited && enable_normal_filter;
+  
 #ifdef MP_EN
+  // 启用多线程并行处理
   omp_set_num_threads(MP_PROC_NUM);
 #pragma omp parallel for
 #endif
+  // 遍历每个扫描点进行过滤
   for (int i = 0; i < scan_size; ++i) {
     const auto &pt = valid_source_cloud_for_VIO->points[i];
-    // 仅保留lidar自身周围一定范围
+    
+    // 计算点相对于IMU的光束向量
     V3D pt_beam{pt.x - pos_I.x(), pt.y - pos_I.y(), pt.z - pos_I.z()};
-    M3D T_I_W = rot_I.transpose();
+    
+    // 将光束向量转换到IMU坐标系
+    M3D T_I_W = rot_I.transpose(); // 世界到IMU的旋转矩阵
     V3D pt_beam_I = T_I_W * (pt_beam);
+    
+    // 检查点是否在IMU视野范围内（x、y、z方向的阈值检查）
     if (fabs(pt_beam_I.z()) > z_thresh || fabs(pt_beam_I.y()) > y_thresh ||
         fabs(pt_beam_I.x()) > x_thresh) {
-      continue;
+      continue; // 超出视野范围，跳过该点
     }
+    
+    // 创建点的副本并设置默认权重
     auto pt_copy = pt;
-    pt_copy.intensity = 1.0;
+    pt_copy.intensity = 1.0; // 设置默认强度权重
+    
+    // 如果启用法线过滤
     if (normal_filter) {
-      if (pt.normal_x > 1) // means invalid point in LIO
+      // 检查点的法线是否有效（normal_x > 1表示无效点）
+      if (pt.normal_x > 1) // LIO中标记的无效点
         continue;
-      // 仅保留法线与与光心射线夹角小的点
+      
+      // 计算点的法线向量
       V3D pt_normal{pt.normal_x, pt.normal_y, pt.normal_z};
-      pt_beam.normalize();
+      pt_beam.normalize(); // 归一化光束向量
+      
+      // 计算法线与光束向量的夹角余弦值
       double dot = fabs(pt_normal.dot(pt_beam));
+      
+      // 如果夹角大于阈值，说明是大角度点，给予特殊权重
       if (dot < cos(norm_thresh)) {
-        pt_copy.intensity = weight;
-        // pt_copy.curvature =1;
-        is_scan_selected[i] = 2;
+        pt_copy.intensity = weight; // 设置大角度点的权重
+        is_scan_selected[i] = 2; // 标记为大角度点
       }
     }
-    is_scan_selected[i] += 1;
-    scan_vec[i] = pt_copy;
+    
+    is_scan_selected[i] += 1; // 增加选择标志
+    scan_vec[i] = pt_copy;    // 保存处理后的点
   }
+  
+  // 根据选择标志整理过滤后的扫描点云
   CloudPtr scan_W_filtered(new PointCloudXYZI());
   scan_W_filtered->reserve(scan_size);
-  int scan_large_angle_cnt{0};
+  int scan_large_angle_cnt{0}; // 大角度点计数器
+  
   for (int i = 0; i < scan_size; ++i) {
     if (is_scan_selected[i] == 0)
-      continue;
+      continue; // 未选中的点跳过
     else if (is_scan_selected[i] == 1) {
+      // 普通点：添加到过滤后的点云
       scan_W_filtered->push_back(scan_vec[i]);
     } else if (is_scan_selected[i] == 3) {
+      // 大角度点：既添加到过滤点云，也添加到噪声点云
       scan_W_filtered->push_back(scan_vec[i]);
       lidar_selector->noise_cloud->push_back(scan_vec[i]);
       ++scan_large_angle_cnt;
     }
   }
-  filter_scan_t = omp_get_wtime() - tt;
+  filter_scan_t = omp_get_wtime() - tt; // 记录扫描过滤时间
 
+  // ========== 过滤地图点云 ==========
   tt = omp_get_wtime();
-  // 将地图补充到当前帧，扩大lidarFOV
   int map_size = featsFromMap->points.size();
   CloudPtr map_W_filtered(new PointCloudXYZI());
-  std::vector<int> map_out_FOV_vec(map_size, 0);
-  int out_FOV_cnt{0}, map_large_angle_cnt{0};
+  std::vector<int> map_out_FOV_vec(map_size, 0); // 地图点视野外标志
+  int out_FOV_cnt{0}, map_large_angle_cnt{0}; // 视野外点和大角度点计数器
+  
+  // 如果启用地图投影且地图不为空
   if (use_map_proj && map_size) {
-    std::vector<int> is_map_selected(map_size, 0);
-    std::vector<PointType> map_vec(map_size);
+    std::vector<int> is_map_selected(map_size, 0); // 地图点选择标志
+    std::vector<PointType> map_vec(map_size);      // 地图点副本容器
+    
 #ifdef MP_EN
+    // 启用多线程并行处理
     omp_set_num_threads(MP_PROC_NUM);
 #pragma omp parallel for
 #endif
+    // 遍历每个地图点进行过滤
     for (int i = 0; i < map_size; ++i) {
       const auto &pt = featsFromMap->points[i];
+      
+      // 计算地图点相对于IMU的光束向量
       V3D pt_beam{pt.x - pos_I.x(), pt.y - pos_I.y(), pt.z - pos_I.z()};
+      
+      // 将光束向量转换到IMU坐标系
       M3D T_I_W = rot_I.transpose();
       V3D pt_beam_I = T_I_W * (pt_beam);
+      
+      // 检查地图点是否在视野范围内
       if (fabs(pt_beam_I.z()) > z_thresh || fabs(pt_beam_I.y()) > y_thresh ||
           fabs(pt_beam_I.x()) > x_thresh) {
-        map_out_FOV_vec[i] = 1;
+        map_out_FOV_vec[i] = 1; // 标记为视野外
         continue;
       }
 
+      // 创建地图点的副本
       auto pt_copy = pt;
       pt_copy.intensity = 1.0;
+      
+      // 如果启用法线过滤
       if (normal_filter) {
+        // 检查地图点的法线是否有效
         if (pt.normal_x > 1)
           continue;
+        
+        // 计算地图点的法线向量和夹角
         V3D pt_normal{pt.normal_x, pt.normal_y, pt.normal_z};
         pt_beam.normalize();
         double dot = fabs(pt_normal.dot(pt_beam));
+        
+        // 大角度地图点处理
         if (dot < cos(norm_thresh)) {
-          // pt_copy.curvature = 2;
-          pt_copy.intensity = weight;
-          is_map_selected[i] = 2;
+          pt_copy.intensity = weight; // 设置权重
+          is_map_selected[i] = 2;     // 标记为大角度点
         }
       }
-      is_map_selected[i] += 1;
-      map_vec[i] = pt_copy;
+      
+      is_map_selected[i] += 1; // 增加选择标志
+      map_vec[i] = pt_copy;    // 保存处理后的点
     }
 
+    // 根据选择标志整理过滤后的地图点云
     map_W_filtered->reserve(map_size);
     for (int i = 0; i < map_size; ++i) {
       if (is_map_selected[i] == 0)
-        continue;
+        continue; // 未选中的点跳过
       else if (is_map_selected[i] == 1) {
+        // 普通地图点
         map_W_filtered->push_back(map_vec[i]);
       } else if (is_map_selected[i] == 3) {
+        // 大角度地图点：既添加到过滤点云，也添加到噪声点云
         map_W_filtered->push_back(map_vec[i]);
         lidar_selector->noise_cloud->push_back(map_vec[i]);
         ++map_large_angle_cnt;
       }
+      
+      // 统计视野外的点
       if (map_out_FOV_vec[i])
         ++out_FOV_cnt;
     }
   }
-  filter_map_t = omp_get_wtime() - tt;
+  filter_map_t = omp_get_wtime() - tt; // 记录地图过滤时间
 
+  // 输出过滤统计信息
   LDEBUG << "[ VIO filter scan and map] size scan: " << feats_undistort->size()
          << " downsampled scan: " << feats_down_body->size()
          << " valid size: " << valid_source_cloud->size()
@@ -1433,12 +1584,15 @@ void FastLivoSlam::EstimateVIOState() {
          << " map_large_angle_cnt:" << map_large_angle_cnt
          << " noise: " << lidar_selector->noise_cloud->size() << REND;
 
-  // estimate state 
+  // ========== 执行状态估计 ==========
   tt = omp_get_wtime();
+  // 调用视觉选择器进行特征检测和状态估计
+  // 参数：图像时间戳、图像数据、过滤后的扫描点云、过滤后的地图点云
   lidar_selector->detect(LidarMeasures.measures.back().last_img_time,
-                         LidarMeasures.measures.back().img, scan_W_filtered,
+                         LidarMeasures.measures.back().img, 
+                         scan_W_filtered,
                          map_W_filtered);
-  detect_t = omp_get_wtime() - tt;
+  detect_t = omp_get_wtime() - tt; // 记录检测时间
 }
 
 void FastLivoSlam::PublishVIOResult() {
